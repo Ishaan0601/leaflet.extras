@@ -34,14 +34,18 @@ heatmapDependency <- function() {
 #' ## for more examples see
 #' # browseURL(system.file("examples/heatmaps.R", package = "leaflet.extras"))
 addHeatmap <- function(
-    map, lng = NULL, lat = NULL, intensity = NULL, layerId = NULL, group = NULL,
+   map,
+   shared,                                  
+   lng = NULL, lat = NULL, intensity = NULL,
+   layerId = NULL, group = NULL,
     minOpacity = 0.05,
     max = 1.0, radius = 25,
     blur = 15, gradient = NULL, cellSize = NULL,
     data = leaflet::getMapData(map)) {
   map$dependencies <- c(
     map$dependencies,
-    heatmapDependency()
+    heatmapDependency(),
+    crosstalk::crosstalkLibs()            
   )
 
   # convert gradient to expected format from leaflet
@@ -53,8 +57,11 @@ addHeatmap <- function(
     names(gradient) <- as.character(0:20 / 20)
   }
 
+ # if `shared` is a SharedData, pull its selected data frame;
+  # otherwise assume `shared` is your data frame:
+  df <- if (inherits(shared, "SharedData")) shared$data(withSelection = TRUE) else shared
   pts <- leaflet::derivePoints(
-    data, lng, lat, missing(lng), missing(lat), "addHeatmap"
+    df, lng, lat, missing(lng), missing(lat), "addHeatmap"
   )
 
   if (is.null(intensity)) {
@@ -66,16 +73,31 @@ addHeatmap <- function(
     points <- cbind(pts$lat, pts$lng, intensity)
   }
 
+  # Build the rawData list of key/lat/lng/weight for JS filtering:
+  rawData <- df %>%
+    dplyr::transmute(
+      key    = as.character(.key),
+      lat    = !!rlang::enquo(lat),
+      lng    = !!rlang::enquo(lng),
+      weight = if (is.null(intensity)) NA_real_ else !!rlang::enquo(intensity)
+    ) %>% purrr::transpose()
+
   leaflet::invokeMethod(
-    map, data, "addHeatmap", points,
-    layerId, group,
+    map,                  # leaflet proxy
+    df,                   # data context
+    "addHeatmap",         # JS method
+    points,               # [lat, lng, intensity] matrix
+    layerId,              # Leaflet layerId
+    group,                # Leaflet group
+    rawData,              # NEW: unfiltered rows
+    shared$groupName(),   # NEW: Crosstalk group name
     leaflet::filterNULL(list(
       minOpacity = minOpacity,
-      max = max,
-      radius = radius,
-      blur = blur,
-      gradient = gradient,
-      cellSize = cellSize
+      max        = max,
+      radius     = radius,
+      blur       = blur,
+      gradient   = gradient,
+      cellSize   = cellSize
     ))
   ) %>% leaflet::expandLimits(pts$lat, pts$lng)
 }
